@@ -1,14 +1,16 @@
-import time
 import threading
+import time
 
-class Cajero(threading.Thread): #Clase hija de threading.Thread
-    def __init__(self,id,banco):
-        super().__init__() #Llamando al constructor de la clase Padre
-        self.id_cajero=id
-        self.banco=banco
-        self.start() # Con esta linea iniciamos el hilo al construirlo, se ejecuta run()
+
+class Cajero(threading.Thread):
+
+    def __init__(self, id_cajero, banco):
+        super().__init__()
+        self.id_cajero = id_cajero
+        self.banco = banco
+        self.start()
 
     def run(self):
-        print('Cajero iniciando operaciones...')
-        time.sleep(0.01)
+        print(f"Cajero {self.id_cajero} inicia operaciones.")
+        time.sleep(0.05)
         self.banco.accion_cajero()

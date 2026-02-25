@@ -1,86 +1,145 @@
-"""
-Acciones del cliente:
-1. Solicitar un retiro
-2. Hacer un depósito
-3. Consultar saldo
-
-Acciones del cajero:
-1. Realizar un retiro a solicitud del cliente
-2. Agregar dinero a una cuenta (Hacer depósito)
-3. Dar información de su saldo al cliente
-
-Cajero cunple las solicitudes del Cliente y Manipula el saldo de la Caja fuerte,
-y marca el cambio en las cuentas de los usuarios.
-"""     
-
-import time
-from Cuentas import Cuenta
-## Importe de transacciones
 import random
 import threading
+import time
+from Cuentas import Cuenta
+from Transacciones import Transaccion
 
 
-class Banco():
-    def __init__(self,nombre,caja_fuerte,num_cuentas):
-        self.historial_transacciones = []
-        self.caja_fuerte = caja_fuerte
+class Banco:
+
+    def __init__(self, nombre, caja_fuerte, num_cuentas):
         self.nombre = nombre
-        self.lock = threading.Lock() # Candado para la bóveda/caja fuerte
-        # Creacion de las cuentas
-        # Cada cuenta tendrá un saldo distinto a través de un número aleatorio entre 200 y 10000
-        self.cuentas = [Cuenta(i, random.uniform(200, 10000)) for i in range(num_cuentas)] # Lista con objetos cuentas
-        self.tiempo_espera = 5
-        # Necesitamos una fila de solicitudes realizadas por los clientes
-        # para ser atendidas por los cajeros
-        self.fila_solicitudes = [] # No hay fila al abrir el banco
-        self.capacidad_fila = 4 # Cantidad maxima de transacciones en la fila
-        self.timbre = threading.Condition() # Condition variable
+        self.caja_fuerte = caja_fuerte
+        self.historial_transacciones = []
 
-    
-    def accion_cliente(self):
-        print('Accion del Cliente')
-        eleccion = random.choice([1,2,3]) # simulamos la elección aleatoria de una operación
-        cuenta = random.choice(self.cuentas) # Elegir una cuenta aleatoria
-        id_cliente = random.randint(1, 1000)
+        self.lock = threading.Lock()              # Protege caja fuerte e historial
+        self.timbre = threading.Condition()      # Controla fila
+
+        self.cuentas = [
+            Cuenta(i, random.uniform(200, 10000))
+            for i in range(num_cuentas)
+        ]
+
+        self.fila_solicitudes = []
+        self.capacidad_fila = 4
+        self.clientes_activos = 0
+        self.tiempo_espera = 0.2
+
+    # ===============================
+    # CLIENTE GENERA SOLICITUD
+    # ===============================
+    def espera_cliente(self, id_cliente):
+
         with self.timbre:
-            match eleccion:
-                case 1:
-                    print(f'Solicitud de retiro en cuenta {cuenta.id_cuenta}')
-                    monto = random.uniform(50, 500)
-                    with self.lock:
-                        if monto > cuenta.saldo:
-                            print(f'No hay suficiente dinero en la cuenta {cuenta.id_cuenta} para retirar {monto:.2f}')
-                        elif monto <= 0:
-                            print(f'Monto inválido para retiro en cuenta {cuenta.id_cuenta}')
-                        else:
-                            cuenta.retirar(monto)
-                            self.caja_fuerte -= monto
-                            from Transacciones import Transaccion
-                            tx = Transaccion(len(self.historial_transacciones)+1, id_cliente, 'Retiro', cuenta.id_cuenta, monto)
-                            self.historial_transacciones.append(tx)
-                    time.sleep(self.tiempo_espera)
-                case 2:
-                    print(f'Solicitud de depósito en cuenta {cuenta.id_cuenta}')
-                    monto = random.uniform(50, 500)
-                    with self.lock:
-                        if monto <= 0:
-                            print(f'Monto inválido para depósito en cuenta {cuenta.id_cuenta}')
-                        else:
-                            cuenta.depositar(monto)
-                            self.caja_fuerte += monto
-                            from Transacciones import Transaccion
-                            tx = Transaccion(len(self.historial_transacciones)+1, id_cliente, 'Depósito', cuenta.id_cuenta, monto)
-                            self.historial_transacciones.append(tx)
-                    time.sleep(self.tiempo_espera)
-                case 3:
-                    print(f'Solicitud de Consulta de Saldo en cuenta {cuenta.id_cuenta}')
-                    with self.lock:
-                        print(f'Saldo actual de la cuenta {cuenta.id_cuenta}: {cuenta.saldo}')
-                        from Transacciones import Transaccion
-                        tx = Transaccion(len(self.historial_transacciones)+1, id_cliente, 'Consulta', cuenta.id_cuenta, cuenta.saldo)
-                        self.historial_transacciones.append(tx)
-                    time.sleep(self.tiempo_espera)
-        
-    
+            self.clientes_activos += 1
+            print(f"Cliente {id_cliente} esperando en fila...")
+
+            while len(self.fila_solicitudes) >= self.capacidad_fila:
+                print(f"Fila llena. Cliente {id_cliente} espera.")
+                self.timbre.wait()
+
+            self.fila_solicitudes.append(id_cliente)
+            self.timbre.notify_all()
+
+    # ===============================
+    # CAJERO PROCESA SOLICITUD
+    # ===============================
     def accion_cajero(self):
+
         print("Accion Cajero")
+
+        while True:
+
+            with self.timbre:
+
+                # Condición de cierre segura
+                if self.clientes_activos == 0 and not self.fila_solicitudes:
+                    print("Cajero finaliza: no hay clientes ni fila.")
+                    break
+
+                while not self.fila_solicitudes:
+                    self.timbre.wait(timeout=1)
+
+                    if self.clientes_activos == 0 and not self.fila_solicitudes:
+                        print("Cajero finaliza por inactividad.")
+                        return
+
+                id_cliente = self.fila_solicitudes.pop(0)
+                self.timbre.notify_all()
+
+            # Procesar solicitud
+            self.procesar_operacion(id_cliente)
+
+            with self.timbre:
+                self.clientes_activos -= 1
+
+            time.sleep(self.tiempo_espera)
+
+    # ===============================
+    # LÓGICA DE OPERACIONES
+    # ===============================
+    def procesar_operacion(self, id_cliente):
+
+        cuenta = random.choice(self.cuentas)
+        cuenta_destino = random.choice(
+            [c for c in self.cuentas if c != cuenta]
+        )
+
+        accion = random.choice(["retiro", "deposito", "consulta", "transferencia"])
+
+        if accion == "retiro":
+            monto = random.uniform(50, 500)
+            with self.lock:
+                print(f"Cliente {id_cliente}: Solicitud de retiro en cuenta {cuenta.id_cuenta}")
+                print(f"Saldo antes: {cuenta.saldo:.2f}, Monto a retirar: {monto:.2f}")
+                if monto <= cuenta.saldo:
+                    cuenta.retirar(monto)
+                    self.caja_fuerte -= monto
+                    print(f"Retiro realizado. Saldo final: {cuenta.saldo:.2f}")
+                    self.registrar_tx(id_cliente, "Retiro", cuenta.id_cuenta, monto)
+                else:
+                    print(f"No hay suficiente saldo para retirar {monto:.2f}")
+
+        elif accion == "deposito":
+            monto = random.uniform(50, 500)
+            with self.lock:
+                print(f"Cliente {id_cliente}: Solicitud de depósito en cuenta {cuenta.id_cuenta}")
+                print(f"Saldo antes: {cuenta.saldo:.2f}, Monto a depositar: {monto:.2f}")
+                cuenta.depositar(monto)
+                self.caja_fuerte += monto
+                print(f"Depósito realizado. Saldo final: {cuenta.saldo:.2f}")
+                self.registrar_tx(id_cliente, "Depósito", cuenta.id_cuenta, monto)
+
+        elif accion == "consulta":
+            with self.lock:
+                saldo = cuenta.saldo
+                print(f"Cliente {id_cliente}: Consulta de saldo en cuenta {cuenta.id_cuenta}: {saldo:.2f}")
+                self.registrar_tx(id_cliente, "Consulta", cuenta.id_cuenta, saldo)
+
+        elif accion == "transferencia":
+            monto = random.uniform(50, 500)
+            with self.lock:
+                print(f"Cliente {id_cliente}: Solicitud de transferencia de cuenta {cuenta.id_cuenta} a cuenta {cuenta_destino.id_cuenta}")
+                print(f"Saldo origen antes: {cuenta.saldo:.2f}, saldo destino antes: {cuenta_destino.saldo:.2f}, Monto: {monto:.2f}")
+                if monto <= cuenta.saldo:
+                    cuenta.retirar(monto)
+                    cuenta_destino.depositar(monto)
+                    print(f"Transferencia realizada. Saldo origen final: {cuenta.saldo:.2f}, saldo destino final: {cuenta_destino.saldo:.2f}")
+                    self.registrar_tx(id_cliente, "Transferencia", cuenta_destino.id_cuenta, monto)
+                else:
+                    print(f"No hay suficiente saldo para transferir {monto:.2f}")
+
+    # ===============================
+    # REGISTRO DE TRANSACCIONES
+    # ===============================
+    def registrar_tx(self, id_cliente, tipo, cuenta_destino, monto):
+
+        tx = Transaccion(
+            len(self.historial_transacciones) + 1,
+            id_cliente,
+            tipo,
+            cuenta_destino,
+            monto
+        )
+
+        self.historial_transacciones.append(tx)
