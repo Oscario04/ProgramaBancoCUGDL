@@ -37,8 +37,8 @@ for cajero in cajeros:
     cajero.join()
 
 
-# Forzar mínimo de 20 transacciones
-while len(banco.historial_transacciones) < 20:
+# Forzar mínimo de 30 transacciones
+while len(banco.historial_transacciones) < 30:
     banco.procesar_operacion(random.randint(0, num_clientes-1))
 
 
